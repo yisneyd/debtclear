@@ -2992,9 +2992,10 @@ canvas { display: block; width: 100% !important; max-height: 195px; }
     <div class="add-grid">
       <div class="afield"><label>Name</label><input type="text" id="nn" placeholder="e.g. Visa Card"></div>
       <div class="afield"><label>Type</label>
-        <select id="nt">
-          <option>Credit Card</option><option>Auto Loan</option><option>Student Loan</option>
-          <option>Medical</option><option>Personal Loan</option><option>Mortgage</option><option>Other</option>
+        <select id="nt" onchange="handleTypeSelectChange(this)">
+          <option>Credit Card</option><option>Personal Loan</option><option>Student Loan</option>
+          <option>Medical</option><option>Auto Loan</option><option>Mortgage</option><option>Other</option>
+          <option value="__add_new__">+ Add new type...</option>
         </select>
       </div>
       <div class="afield"><label>Owner</label>
@@ -3561,6 +3562,13 @@ canvas { display: block; width: 100% !important; max-height: 195px; }
   </div>
 
   <!-- Owner Name Settings -->
+  <div class="section-label" style="margin-top:var(--gap)">Debt Types</div>
+  <div class="wi-card" style="max-width:520px;margin-bottom:var(--gap)">
+    <div class="wi-ttl">Manage debt types</div>
+    <p style="font-size:.82rem;color:var(--text3);margin-bottom:14px;line-height:1.6">Edit existing type names or add new ones. Changes apply everywhere — debt cards, filters, and badges. "Other" cannot be removed.</p>
+    <div id="debt-type-manage-list"></div>
+  </div>
+
   <div class="section-label" style="margin-top:var(--gap)">People &amp; Accounts</div>
   <div class="wi-card" style="max-width:520px">
     <div class="wi-ttl">Who tracks debt here?</div>
@@ -3635,15 +3643,22 @@ var wiAdvOpen = false;
 var ownerView = 'all';   /* 'all' | 'me' | 'husband' | 'joint' */
 
 var COLORS = ['#4ecb94','#6ab0d8','#9b8ecf','#d9886a','#c99a3e','#5ec4be','#b88ecf','#7ab48e'];
-var TC = {
-  'Credit Card':  { bg:'rgba(217,136,106,.13)', c:'#d9886a' },
-  'Auto Loan':    { bg:'rgba(106,176,216,.13)', c:'#6ab0d8' },
-  'Student Loan': { bg:'rgba(155,142,207,.13)', c:'#9b8ecf' },
-  'Medical':      { bg:'rgba(201,154,62,.13)',  c:'#c99a3e' },
-  'Personal Loan':{ bg:'rgba(94,196,190,.13)',  c:'#5ec4be' },
-  'Mortgage':     { bg:'rgba(78,203,148,.13)',  c:'#4ecb94' },
-  'Other':        { bg:'rgba(138,153,184,.13)', c:'#8a99b8' }
-};
+var DEBT_TYPES = [
+  { name: 'Credit Card',   bg: 'rgba(217,136,106,.13)', c: '#d9886a' },
+  { name: 'Personal Loan', bg: 'rgba(94,196,190,.13)',  c: '#5ec4be' },
+  { name: 'Student Loan',  bg: 'rgba(155,142,207,.13)', c: '#9b8ecf' },
+  { name: 'Medical',       bg: 'rgba(201,154,62,.13)',  c: '#c99a3e' },
+  { name: 'Auto Loan',     bg: 'rgba(106,176,216,.13)', c: '#6ab0d8' },
+  { name: 'Mortgage',      bg: 'rgba(78,203,148,.13)',  c: '#4ecb94' },
+  { name: 'Other',         bg: 'rgba(138,153,184,.13)', c: '#8a99b8' }
+];
+/* Keep TC as a live proxy for any code that still reads TC[type] */
+var TC = {};
+function syncTC() {
+  TC = {};
+  DEBT_TYPES.forEach(function(t) { TC[t.name] = { bg: t.bg, c: t.c }; });
+}
+syncTC();
 
 /* ==============================================================
    SAFE HTML ESCAPE
@@ -3930,6 +3945,112 @@ function syncOwnerLegacy() {
   OWNERS.forEach(function(o) { OWNER_LABELS[o.id] = o.label; OWNER_COLORS[o.id] = o.color; });
 }
 
+/* ── DEBT TYPE HELPERS ───────────────────────────────────── */
+
+/* Build <option> list for a type <select>, with current value selected */
+function buildTypeOptions(currentVal) {
+  var opts = DEBT_TYPES.map(function(t) {
+    return '<option value="' + esc(t.name) + '"' + (currentVal === t.name ? ' selected' : '') + '>' + esc(t.name) + '</option>';
+  }).join('');
+  opts += '<option value="__add_new__">+ Add new type...</option>';
+  return opts;
+}
+
+/* Re-render every type select in the DOM */
+function refreshDebtTypeSelects() {
+  syncTC();
+  /* Add-debt form */
+  var ntEl = document.getElementById('nt');
+  if (ntEl) { var cur = ntEl.value; ntEl.innerHTML = buildTypeOptions(cur); }
+  /* Debt edit panels */
+  document.querySelectorAll('select[data-typefield]').forEach(function(sel) {
+    var cur = sel.value;
+    sel.innerHTML = buildTypeOptions(cur);
+  });
+  /* Manage list in budget tab */
+  renderDebtTypeManageList();
+}
+
+function addDebtType(name) {
+  name = name.trim();
+  if (!name || DEBT_TYPES.find(function(t){ return t.name === name; })) return;
+  var palette = ['#d9886a','#6ab0d8','#9b8ecf','#c99a3e','#5ec4be','#4ecb94','#8a99b8','#e879a0','#34d399','#60a5fa'];
+  var c = palette[DEBT_TYPES.length % palette.length];
+  var bgAlpha = c.replace('#','');
+  /* Convert hex to rgba */
+  var r = parseInt(bgAlpha.slice(0,2),16), g = parseInt(bgAlpha.slice(2,4),16), b = parseInt(bgAlpha.slice(4,6),16);
+  DEBT_TYPES.push({ name: name, bg: 'rgba('+r+','+g+','+b+',.13)', c: c });
+  save();
+  refreshDebtTypeSelects();
+  toast(name + ' added');
+}
+
+function renameDebtType(idx, newName) {
+  newName = newName.trim();
+  if (!newName) return;
+  var oldName = DEBT_TYPES[idx].name;
+  DEBT_TYPES[idx].name = newName;
+  /* Update any debts using the old name */
+  debts.forEach(function(d) { if (d.type === oldName) d.type = newName; });
+  save();
+  refreshDebtTypeSelects();
+  renderDebts();
+}
+
+function removeDebtType(idx) {
+  if (idx < 0 || DEBT_TYPES[idx].name === 'Other') { toast("Can't remove Other"); return; }
+  var name = DEBT_TYPES[idx].name;
+  /* Reassign debts using this type to Other */
+  debts.forEach(function(d) { if (d.type === name) d.type = 'Other'; });
+  DEBT_TYPES.splice(idx, 1);
+  save();
+  refreshDebtTypeSelects();
+  renderDebts();
+  toast(name + ' removed');
+}
+
+function renderDebtTypeManageList() {
+  var el = document.getElementById('debt-type-manage-list');
+  if (!el) return;
+  el.innerHTML = DEBT_TYPES.map(function(t, idx) {
+    return '<div class="owner-manage-row">' +
+      '<div class="omr-color" style="background:' + t.c + '" title="' + esc(t.name) + '"></div>' +
+      '<input class="omr-name" type="text" value="' + esc(t.name) + '" maxlength="32" onchange="renameDebtType(' + idx + ',this.value)">' +
+      (t.name !== 'Other'
+        ? '<button class="omr-del" onclick="removeDebtType(' + idx + ')" title="Remove">&#10005;</button>'
+        : '<span class="omr-del-placeholder"></span>') +
+    '</div>';
+  }).join('') +
+  '<div class="add-owner-row" style="margin-top:10px">' +
+    '<input type="text" id="new-type-name" placeholder="e.g. HELOC, Buy Now Pay Later..." maxlength="32">' +
+    '<button class="btn btn-primary btn-sm" onclick="addDebtTypeFromInput()">+ Add</button>' +
+  '</div>';
+}
+
+function addDebtTypeFromInput() {
+  var el = document.getElementById('new-type-name');
+  if (!el || !el.value.trim()) { toast('Enter a type name'); return; }
+  addDebtType(el.value.trim());
+  el.value = '';
+}
+
+/* Handle "Add new type..." option selected in any select */
+function handleTypeSelectChange(sel, debtId) {
+  if (sel.value === '__add_new__') {
+    var name = prompt('New debt type name:');
+    if (name && name.trim()) {
+      addDebtType(name.trim());
+      sel.value = name.trim();
+    } else {
+      sel.value = DEBT_TYPES[0].name;
+    }
+    return;
+  }
+  if (debtId !== undefined) {
+    updDebt(debtId, 'type', sel.value);
+  }
+}
+
 function ownerLabel(key) {
   var o = OWNERS.find(function(x){ return x.id === key; });
   return o ? o.label : (key || 'Unknown');
@@ -3960,6 +4081,7 @@ function refreshOwnerLabels() {
   renderOwnerPills();
   renderOwnerManageCard();
   updateAddDebtOwnerOptions();
+  refreshDebtTypeSelects();
   renderHouseholdProgress();
   renderDebts();
 }
@@ -4162,11 +4284,7 @@ function renderDebts() {
             '<div class="fg"><label>Min payment ($)</label><input type="number" value="' + d.min + '" onchange="updDebt(' + d.id + ',\'min\',this.value)"></div>' +
             '<div class="fg"><label>Current payment ($)</label><input type="number" value="' + (d.actual || d.min) + '" onchange="updDebt(' + d.id + ',\'actual\',this.value)" title="What you actually pay each month"></div>' +
             '<div class="fg"><label>Original balance ($)</label><input type="number" value="' + d.origBalance + '" onchange="updDebt(' + d.id + ',\'origBalance\',this.value)"></div>' +
-            '<div class="fg"><label>Type</label><select onchange="updDebt(' + d.id + ',\'type\',this.value)">' +
-              ['Credit Card','Auto Loan','Student Loan','Medical','Personal Loan','Mortgage','Other'].map(function(t) {
-                return '<option' + (t===d.type?' selected':'') + '>' + t + '</option>';
-              }).join('') +
-            '</select></div>' +
+            '<div class="fg"><label>Type</label><select data-typefield="1" onchange="handleTypeSelectChange(this,' + d.id + ')">' + buildTypeOptions(d.type) + '</select></div>' +
             '<div class="fg"><label>Owner</label>' + ownerSelect('owner', o, d.id) + '</div>' +
           '</div>' +
           '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">' +
@@ -6543,6 +6661,7 @@ function save() {
         },
         ownerLabels: { me: OWNER_LABELS.me, husband: OWNER_LABELS.husband, joint: OWNER_LABELS.joint },
         owners: OWNERS,
+        debtTypes: DEBT_TYPES,
         spending: {
           wkMe:    document.getElementById('sp-wk-me')  ? document.getElementById('sp-wk-me').value  : '',
           moMe:    document.getElementById('sp-mo-me')  ? document.getElementById('sp-mo-me').value  : '',
@@ -6701,6 +6820,16 @@ function loadFromStorage() {
       if (state.ownerLabels.joint)   OWNERS[2].label = state.ownerLabels.joint;
     }
     syncOwnerLegacy();
+
+    // Debt types
+    if (Array.isArray(state.debtTypes) && state.debtTypes.length > 0) {
+      /* Merge: keep any custom types from saved state, ensure Other always exists */
+      DEBT_TYPES = state.debtTypes;
+      if (!DEBT_TYPES.find(function(t){ return t.name === 'Other'; })) {
+        DEBT_TYPES.push({ name:'Other', bg:'rgba(138,153,184,.13)', c:'#8a99b8' });
+      }
+      syncTC();
+    }
 
     // UI state
     if (state.ui) {
